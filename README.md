@@ -1,2 +1,3 @@
 # otty-bots
-Automation
+
+Small scheduled automation scripts. No data lives here.
