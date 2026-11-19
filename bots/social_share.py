@@ -136,9 +136,21 @@ def buffer_post(channel_id, text, service=""):
         return True, r["post"]["id"]
     return False, r.get("message", str(r))
 
+NATIVE = CFG.get("native", {})
+
+def native_owns(vid, p, man, native):
+    """While native posting is on, a short with a manifest is left to the native uploader (hypeotter-media)
+    until it posts there or gives up on that platform; then the link post is the fallback."""
+    if not NATIVE.get("enabled") or not man or man.get("kind", "short") not in NATIVE.get("kinds", ["short"]):
+        return False
+    r = native.get("videos", {}).get(vid, {}).get(p, {})
+    return not (r and not r.get("ok") and r.get("tries", 0) >= NATIVE.get("max_tries", 3))
+
 def main():
     now = dt.datetime.now(ET_TZ)
     state = load_state()
+    np_ = os.path.join(ROOT, "social", "native.json")
+    native = json.load(open(np_)) if os.path.exists(np_) else {}
     if not FORCE:
         lo, hi = CFG["post_hours_et"]
         if not (lo <= now.hour <= hi):
@@ -162,6 +174,7 @@ def main():
             continue
         rec = state["videos"].setdefault(vid, {})
         todo = [p for p in plats if not rec.get(p, {}).get("ok") and rec.get(p, {}).get("tries", 0) < 3]
+        todo = [p for p in todo if not native_owns(vid, p, mans.get(vid), native)]
         if not todo:
             continue
         pub, otitle = is_public(vid)
