@@ -181,7 +181,7 @@ def main():
         if not pub:
             continue
         title, q, tags = parts(vid, mans.get(vid), rss_title.get(vid) or otitle)
-        url = f"https://youtu.be/{vid}"
+        url = (f"https://youtube.com/shorts/{vid}" if (mans.get(vid) or {}).get("kind", "short") == "short" and mans.get(vid) else f"https://youtube.com/watch?v={vid}")
         for p in todo:
             txt = caption(p, title, q, tags, url)
             print(f"--- {vid} -> {p}\n{txt}\n")
