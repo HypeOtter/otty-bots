@@ -146,6 +146,51 @@ def native_owns(vid, p, man, native):
     r = native.get("videos", {}).get(vid, {}).get(p, {})
     return not (r and not r.get("ok") and r.get("tries", 0) >= NATIVE.get("max_tries", 3))
 
+RESHARE = {"enabled": True, "after_days": 14, "per_day": 2} | CFG.get("reshare", {})
+ICYMI = {"twitter": "In case you missed it 🦦", "facebook": "Still one of our favorites 🦦", "threads": "in case you missed this one 🦦"}
+
+def reshare(state, mans, rss_title, chans, now):
+    """On a run with nothing new, re-share one older public video (not shared in the last after_days days),
+    at most per_day a day, so the catalog keeps sending traffic to YouTube."""
+    if not RESHARE["enabled"]:
+        return False
+    day = now.date().isoformat(); rs = state.setdefault("reshare", {})
+    if rs.get("day") != day:
+        rs.update({"day": day, "count": 0})
+    if rs["count"] >= RESHARE["per_day"]:
+        return False
+    def last(v):
+        ts = [r.get("at") for r in v.values() if isinstance(r, dict) and r.get("ok") and r.get("at")]
+        return max(ts) if ts else ""
+    cut = (now - dt.timedelta(days=RESHARE["after_days"])).isoformat(timespec="minutes")
+    olds = sorted(((last(v), vid) for vid, v in state["videos"].items()
+                   if vid not in CFG["skip_video_ids"] and last(v) and last(v) < cut), key=lambda x: x[0])
+    for _, vid in olds:
+        pub, otitle = is_public(vid)
+        if not pub:
+            continue
+        title, q, tags = parts(vid, mans.get(vid), rss_title.get(vid) or otitle)
+        url = f"https://www.youtube.com/watch?v={vid}"
+        rec = state["videos"][vid]
+        for p in CFG["platforms"]:
+            ch = chans.get(p)
+            if not ch:
+                continue
+            txt = caption(p, title, q, tags, url)
+            txt = txt.replace(txt.split("\n")[0], ICYMI[p], 1) if p != "twitter" else f"{ICYMI[p]}\n\n{title}\n\n{q}\n\n▶️ {url}"
+            if p == "twitter" and len(txt) - len(url) + 23 > 280:
+                txt = f"{ICYMI[p]}\n\n{title}\n\n▶️ {url}"
+            try:
+                ok, ref = buffer_post(ch["id"], txt, p)
+            except Exception as ex:
+                ok, ref = False, str(ex)[:300]
+            if ok:
+                rec.setdefault(p, {}).update({"ok": True, "at": now.isoformat(timespec="minutes"), "reshared": rec.get(p, {}).get("reshared", 0) + 1})
+            print("RESHARE", p, ok)
+        rs["count"] += 1
+        return True
+    return False
+
 def main():
     now = dt.datetime.now(ET_TZ)
     state = load_state()
@@ -181,7 +226,7 @@ def main():
         if not pub:
             continue
         title, q, tags = parts(vid, mans.get(vid), rss_title.get(vid) or otitle)
-        url = (f"https://youtube.com/shorts/{vid}" if (mans.get(vid) or {}).get("kind", "short") == "short" and mans.get(vid) else f"https://youtube.com/watch?v={vid}")
+        url = f"https://www.youtube.com/watch?v={vid}"  # normal link to this exact video, Shorts included
         for p in todo:
             txt = caption(p, title, q, tags, url)
             print(f"--- {vid} -> {p}\n{txt}\n")
@@ -205,6 +250,8 @@ def main():
             break
     if done_videos == 0:
         print("nothing new to share")
+        if not DRY and reshare(state, mans, rss_title, chans, now):
+            state["last_post_at"] = now.isoformat(timespec="minutes")
     if not DRY:
         save_state(state)
 
